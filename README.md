@@ -34,6 +34,10 @@ csvnorm -in messy.csv -out clean.csv
   count, so every output row is the same width. Pass `-strict` to fail
   instead of silently fixing ragged rows.
 - Drops rows where every field is empty (disable with `-drop-empty=false`).
+- Recovers from a quoted field that's never closed (a common broken-exporter
+  bug that would otherwise swallow every row after it into one field, or
+  fail outright). When that happens, csvnorm falls back to treating each
+  physical line as one row, prints a warning to stderr, and keeps going.
 
 ### Example
 
@@ -81,6 +85,6 @@ go build -o csvnorm .
 ## Status
 
 Early. Handles the common messiness (delimiter guessing, ragged rows, BOM,
-whitespace) but not yet things like mixed encodings, embedded newlines
-inside oddly-quoted fields from broken exporters, or column-level type
-normalization. See the issue tracker for what's next.
+whitespace, unterminated quotes) but not yet things like mixed encodings,
+a separate output delimiter, or column-level type normalization. See the
+issue tracker for what's next.

@@ -168,6 +168,94 @@ func TestRunEndToEnd(t *testing.T) {
 	}
 }
 
+func TestParseRecordsHandlesWellFormedEmbeddedNewline(t *testing.T) {
+	data := []byte("name,note\nAlice,\"line one\nline two\"\nBob,fine\n")
+	records, fellBack, err := parseRecords(data, ',')
+	if err != nil {
+		t.Fatalf("parseRecords: %v", err)
+	}
+	if fellBack {
+		t.Error("expected no fallback for a properly closed quoted field")
+	}
+	want := [][]string{
+		{"name", "note"},
+		{"Alice", "line one\nline two"},
+		{"Bob", "fine"},
+	}
+	if len(records) != len(want) {
+		t.Fatalf("got %d records, want %d: %v", len(records), len(want), records)
+	}
+	for i := range want {
+		if !equalRows(records[i], want[i]) {
+			t.Errorf("record %d: got %v, want %v", i, records[i], want[i])
+		}
+	}
+}
+
+func TestParseRecordsFallsBackOnUnterminatedQuote(t *testing.T) {
+	data := []byte("name,note\nAlice,\"unterminated note\nBob,fine\n")
+	records, fellBack, err := parseRecords(data, ',')
+	if err != nil {
+		t.Fatalf("parseRecords: %v", err)
+	}
+	if !fellBack {
+		t.Fatal("expected fallback for an unterminated quoted field")
+	}
+	want := [][]string{
+		{"name", "note"},
+		{"Alice", "unterminated note"},
+		{"Bob", "fine"},
+	}
+	if len(records) != len(want) {
+		t.Fatalf("got %d records, want %d: %v", len(records), len(want), records)
+	}
+	for i := range want {
+		if !equalRows(records[i], want[i]) {
+			t.Errorf("record %d: got %v, want %v", i, records[i], want[i])
+		}
+	}
+}
+
+func TestSplitLinePermissiveHonorsQuotedDelimiter(t *testing.T) {
+	got := splitLinePermissive(`"Smith, John",30,"NYC"`, ',')
+	want := []string{"Smith, John", "30", "NYC"}
+	if !equalRows(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestSplitLinePermissiveUnbalancedQuoteKeepsRestOfLine(t *testing.T) {
+	got := splitLinePermissive(`He said "hi,30`, ',')
+	want := []string{"He said hi,30"}
+	if !equalRows(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestRunHandlesUnterminatedQuote(t *testing.T) {
+	dir := t.TempDir()
+	inPath := filepath.Join(dir, "broken.csv")
+	outPath := filepath.Join(dir, "clean.csv")
+
+	input := "name,note\nAlice,\"unterminated note\nBob,fine\n"
+	if err := os.WriteFile(inPath, []byte(input), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := run(inPath, outPath, "", true, false, true); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	got, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	want := "name,note\nAlice,unterminated note\nBob,fine\n"
+	if string(got) != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestRunStrictRejectsRaggedRows(t *testing.T) {
 	dir := t.TempDir()
 	inPath := filepath.Join(dir, "ragged.csv")

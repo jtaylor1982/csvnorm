@@ -6,7 +6,9 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/csv"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -59,15 +61,17 @@ func run(inPath, outPath, delimFlag string, trim, strict, dropEmpty bool) error 
 		return err
 	}
 
-	r := csv.NewReader(reader)
-	r.Comma = delim
-	r.FieldsPerRecord = -1 // rows may be ragged; we normalize them ourselves
-	r.LazyQuotes = true
-	r.TrimLeadingSpace = true
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return fmt.Errorf("reading input: %w", err)
+	}
 
-	records, err := r.ReadAll()
+	records, fellBack, err := parseRecords(data, delim)
 	if err != nil {
 		return fmt.Errorf("reading CSV: %w", err)
+	}
+	if fellBack {
+		fmt.Fprintln(os.Stderr, "csvnorm: malformed quoting detected, falling back to line-based parsing")
 	}
 	if len(records) == 0 {
 		return nil
@@ -159,6 +163,81 @@ func resolveDelim(r *bufio.Reader, delimFlag string) (rune, error) {
 		}
 	}
 	return best, nil
+}
+
+// parseRecords parses data as delim-separated CSV. If a quoted field is
+// left open (a broken exporter's stray or missing closing quote), the
+// standard reader either swallows the rest of the file into one field or
+// fails outright with csv.ErrQuote. In that case we fall back to a
+// permissive, line-based split: quotes are only honored within a single
+// physical line, so a malformed quote can no longer eat the rows that
+// follow it. The fellBack return value reports whether that happened.
+func parseRecords(data []byte, delim rune) (records [][]string, fellBack bool, err error) {
+	r := csv.NewReader(bytes.NewReader(data))
+	r.Comma = delim
+	r.FieldsPerRecord = -1 // rows may be ragged; we normalize them ourselves
+	r.LazyQuotes = true
+	r.TrimLeadingSpace = true
+
+	records, err = r.ReadAll()
+	if err == nil {
+		return records, false, nil
+	}
+
+	var parseErr *csv.ParseError
+	if !errors.As(err, &parseErr) || parseErr.Err != csv.ErrQuote {
+		return nil, false, err
+	}
+	return splitPermissive(data, delim), true, nil
+}
+
+// splitPermissive treats each physical line of data as one record, split
+// on delim. Unlike the RFC 4180 reader it never lets a field span
+// multiple lines, so a stray or missing quote only affects the line it's
+// on rather than swallowing every row after it.
+func splitPermissive(data []byte, delim rune) [][]string {
+	var records [][]string
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			// blank lines are skipped, matching encoding/csv's behavior
+			continue
+		}
+		records = append(records, splitLinePermissive(line, delim))
+	}
+	return records
+}
+
+// splitLinePermissive splits a single line on delim, honoring double
+// quotes as a way to embed delim in a field (with "" as an escaped
+// literal quote). A quote left open at end of line simply makes the rest
+// of the line part of that field instead of erroring.
+func splitLinePermissive(line string, delim rune) []string {
+	var fields []string
+	var buf strings.Builder
+	inQuotes := false
+	runes := []rune(line)
+	for i := 0; i < len(runes); i++ {
+		c := runes[i]
+		switch {
+		case c == '"':
+			if inQuotes && i+1 < len(runes) && runes[i+1] == '"' {
+				buf.WriteRune('"')
+				i++
+			} else {
+				inQuotes = !inQuotes
+			}
+		case c == delim && !inQuotes:
+			fields = append(fields, buf.String())
+			buf.Reset()
+		default:
+			buf.WriteRune(c)
+		}
+	}
+	fields = append(fields, buf.String())
+	return fields
 }
 
 // normalizeRow trims fields (if requested) and pads or truncates the row
