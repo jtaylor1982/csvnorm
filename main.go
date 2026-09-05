@@ -25,22 +25,23 @@ var candidateDelims = []rune{',', ';', '\t', '|'}
 
 func main() {
 	var (
-		inPath  = flag.String("in", "", "input CSV file (default: stdin)")
-		outPath = flag.String("out", "", "output CSV file (default: stdout)")
-		delim   = flag.String("delim", "", "input delimiter; auto-detected if omitted")
-		trim    = flag.Bool("trim", true, "trim leading/trailing whitespace from each field")
-		strict  = flag.Bool("strict", false, "fail on ragged rows instead of padding/truncating them")
+		inPath    = flag.String("in", "", "input CSV file (default: stdin)")
+		outPath   = flag.String("out", "", "output CSV file (default: stdout)")
+		delim     = flag.String("delim", "", "input delimiter; auto-detected if omitted")
+		outDelim  = flag.String("out-delim", ",", "output delimiter")
+		trim      = flag.Bool("trim", true, "trim leading/trailing whitespace from each field")
+		strict    = flag.Bool("strict", false, "fail on ragged rows instead of padding/truncating them")
 		dropEmpty = flag.Bool("drop-empty", true, "drop rows where every field is empty")
 	)
 	flag.Parse()
 
-	if err := run(*inPath, *outPath, *delim, *trim, *strict, *dropEmpty); err != nil {
+	if err := run(*inPath, *outPath, *delim, *outDelim, *trim, *strict, *dropEmpty); err != nil {
 		fmt.Fprintln(os.Stderr, "csvnorm:", err)
 		os.Exit(1)
 	}
 }
 
-func run(inPath, outPath, delimFlag string, trim, strict, dropEmpty bool) error {
+func run(inPath, outPath, delimFlag, outDelimFlag string, trim, strict, dropEmpty bool) error {
 	in, err := openInput(inPath)
 	if err != nil {
 		return err
@@ -59,6 +60,11 @@ func run(inPath, outPath, delimFlag string, trim, strict, dropEmpty bool) error 
 	delim, err := resolveDelim(reader, delimFlag)
 	if err != nil {
 		return err
+	}
+
+	outDelim, err := parseDelimChar(outDelimFlag)
+	if err != nil {
+		return fmt.Errorf("output delimiter: %w", err)
 	}
 
 	data, err := io.ReadAll(reader)
@@ -87,6 +93,7 @@ func run(inPath, outPath, delimFlag string, trim, strict, dropEmpty bool) error 
 	}
 
 	w := csv.NewWriter(out)
+	w.Comma = outDelim
 	for _, rec := range records {
 		rec = normalizeRow(rec, width, trim)
 		if dropEmpty && rowIsEmpty(rec) {
@@ -140,11 +147,7 @@ func stripLeadingBOM(r *bufio.Reader) {
 // delimiter appears most often.
 func resolveDelim(r *bufio.Reader, delimFlag string) (rune, error) {
 	if delimFlag != "" {
-		runes := []rune(delimFlag)
-		if len(runes) != 1 {
-			return 0, fmt.Errorf("delimiter must be a single character, got %q", delimFlag)
-		}
-		return runes[0], nil
+		return parseDelimChar(delimFlag)
 	}
 
 	peek, _ := r.Peek(4096)
@@ -163,6 +166,16 @@ func resolveDelim(r *bufio.Reader, delimFlag string) (rune, error) {
 		}
 	}
 	return best, nil
+}
+
+// parseDelimChar validates that s is exactly one character and returns it
+// as a rune, used for both -delim and -out-delim.
+func parseDelimChar(s string) (rune, error) {
+	runes := []rune(s)
+	if len(runes) != 1 {
+		return 0, fmt.Errorf("delimiter must be a single character, got %q", s)
+	}
+	return runes[0], nil
 }
 
 // parseRecords parses data as delim-separated CSV. If a quoted field is

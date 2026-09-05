@@ -28,6 +28,9 @@ csvnorm -in messy.csv -out clean.csv
 
 - Auto-detects the delimiter (comma, semicolon, tab, or pipe) by counting
   occurrences on the first line, unless you pass `-delim`.
+- Writes comma-delimited output by default, independent of whatever the
+  input used; pass `-out-delim` to write something else instead (a tab, a
+  pipe, whatever the downstream tool expects).
 - Strips a leading UTF-8 byte-order mark if present.
 - Trims leading/trailing whitespace from every field (disable with `-trim=false`).
 - Pads short rows and truncates long rows to match the header's column
@@ -70,6 +73,7 @@ Bob,,Shelbyville
 | `-in`          | stdin   | input file path                                      |
 | `-out`         | stdout  | output file path                                     |
 | `-delim`       | auto    | input delimiter, single character                   |
+| `-out-delim`   | `,`     | output delimiter, single character                   |
 | `-trim`        | true    | trim whitespace from each field                      |
 | `-strict`      | false   | error on ragged rows instead of padding/truncating   |
 | `-drop-empty`  | true    | drop rows where every field is empty                 |
@@ -85,6 +89,6 @@ go build -o csvnorm .
 ## Status
 
 Early. Handles the common messiness (delimiter guessing, ragged rows, BOM,
-whitespace, unterminated quotes) but not yet things like mixed encodings,
-a separate output delimiter, or column-level type normalization. See the
+whitespace, unterminated quotes, choosing an output delimiter) but not yet
+things like mixed encodings or column-level type normalization. See the
 issue tracker for what's next.

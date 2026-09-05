@@ -64,6 +64,28 @@ func TestResolveDelimNoCandidatesFallsBackToComma(t *testing.T) {
 	}
 }
 
+func TestParseDelimChar(t *testing.T) {
+	got, err := parseDelimChar(";")
+	if err != nil {
+		t.Fatalf("parseDelimChar: %v", err)
+	}
+	if got != ';' {
+		t.Errorf("got %q, want ';'", got)
+	}
+}
+
+func TestParseDelimCharRejectsMultiChar(t *testing.T) {
+	if _, err := parseDelimChar("::"); err == nil {
+		t.Error("expected error for multi-character delimiter, got nil")
+	}
+}
+
+func TestParseDelimCharRejectsEmpty(t *testing.T) {
+	if _, err := parseDelimChar(""); err == nil {
+		t.Error("expected error for empty delimiter, got nil")
+	}
+}
+
 func TestStripLeadingBOM(t *testing.T) {
 	r := bufio.NewReader(strings.NewReader(bom + "a,b,c\n"))
 	stripLeadingBOM(r)
@@ -154,7 +176,7 @@ func TestRunEndToEnd(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := run(inPath, outPath, "", true, false, true); err != nil {
+	if err := run(inPath, outPath, "", ",", true, false, true); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -242,7 +264,7 @@ func TestRunHandlesUnterminatedQuote(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := run(inPath, outPath, "", true, false, true); err != nil {
+	if err := run(inPath, outPath, "", ",", true, false, true); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -265,7 +287,45 @@ func TestRunStrictRejectsRaggedRows(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := run(inPath, outPath, "", true, true, true); err == nil {
+	if err := run(inPath, outPath, "", ",", true, true, true); err == nil {
 		t.Error("expected error for ragged row under -strict, got nil")
+	}
+}
+
+func TestRunCustomOutDelim(t *testing.T) {
+	dir := t.TempDir()
+	inPath := filepath.Join(dir, "messy.csv")
+	outPath := filepath.Join(dir, "clean.csv")
+
+	input := "name,age,city\nAlice,30,Springfield\n"
+	if err := os.WriteFile(inPath, []byte(input), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := run(inPath, outPath, "", ";", true, false, true); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	got, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	want := "name;age;city\nAlice;30;Springfield\n"
+	if string(got) != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestRunRejectsMultiCharOutDelim(t *testing.T) {
+	dir := t.TempDir()
+	inPath := filepath.Join(dir, "in.csv")
+	outPath := filepath.Join(dir, "out.csv")
+
+	if err := os.WriteFile(inPath, []byte("a,b,c\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := run(inPath, outPath, "", "::", true, false, true); err == nil {
+		t.Error("expected error for multi-character output delimiter, got nil")
 	}
 }
