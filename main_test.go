@@ -2,10 +2,12 @@ package main
 
 import (
 	"bufio"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf16"
 )
 
 func TestResolveDelimExplicit(t *testing.T) {
@@ -176,7 +178,7 @@ func TestRunEndToEnd(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := run(inPath, outPath, "", ",", true, false, true); err != nil {
+	if err := run(inPath, outPath, "", ",", "", true, false, true); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -264,7 +266,7 @@ func TestRunHandlesUnterminatedQuote(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := run(inPath, outPath, "", ",", true, false, true); err != nil {
+	if err := run(inPath, outPath, "", ",", "", true, false, true); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -287,7 +289,7 @@ func TestRunStrictRejectsRaggedRows(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := run(inPath, outPath, "", ",", true, true, true); err == nil {
+	if err := run(inPath, outPath, "", ",", "", true, true, true); err == nil {
 		t.Error("expected error for ragged row under -strict, got nil")
 	}
 }
@@ -302,7 +304,7 @@ func TestRunCustomOutDelim(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := run(inPath, outPath, "", ";", true, false, true); err != nil {
+	if err := run(inPath, outPath, "", ";", "", true, false, true); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -325,7 +327,130 @@ func TestRunRejectsMultiCharOutDelim(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := run(inPath, outPath, "", "::", true, false, true); err == nil {
+	if err := run(inPath, outPath, "", "::", "", true, false, true); err == nil {
 		t.Error("expected error for multi-character output delimiter, got nil")
+	}
+}
+
+func TestDecodeToUTF8PassesThroughUTF8(t *testing.T) {
+	for _, enc := range []string{"", "utf8", "UTF-8"} {
+		got, err := decodeToUTF8([]byte("café,30\n"), enc)
+		if err != nil {
+			t.Fatalf("decodeToUTF8(%q): %v", enc, err)
+		}
+		if string(got) != "café,30\n" {
+			t.Errorf("decodeToUTF8(%q): got %q, want %q", enc, got, "café,30\n")
+		}
+	}
+}
+
+func TestDecodeToUTF8RejectsUnknownEncoding(t *testing.T) {
+	if _, err := decodeToUTF8([]byte("a,b\n"), "ebcdic"); err == nil {
+		t.Error("expected error for unknown encoding, got nil")
+	}
+}
+
+func TestLatin1ToUTF8(t *testing.T) {
+	// 0xE9 is "é" in Latin-1.
+	got := latin1ToUTF8([]byte{'c', 'a', 'f', 0xE9})
+	if string(got) != "café" {
+		t.Errorf("got %q, want %q", got, "café")
+	}
+}
+
+func TestDecodeUTF16LittleEndianNoBOM(t *testing.T) {
+	// "ab" as UTF-16LE code units.
+	data := []byte{'a', 0, 'b', 0}
+	got, err := decodeUTF16(data, binary.LittleEndian)
+	if err != nil {
+		t.Fatalf("decodeUTF16: %v", err)
+	}
+	if string(got) != "ab" {
+		t.Errorf("got %q, want %q", got, "ab")
+	}
+}
+
+func TestDecodeUTF16BigEndianNoBOM(t *testing.T) {
+	data := []byte{0, 'a', 0, 'b'}
+	got, err := decodeUTF16(data, binary.BigEndian)
+	if err != nil {
+		t.Fatalf("decodeUTF16: %v", err)
+	}
+	if string(got) != "ab" {
+		t.Errorf("got %q, want %q", got, "ab")
+	}
+}
+
+func TestDecodeUTF16BOMOverridesDefaultOrder(t *testing.T) {
+	// LE BOM (FF FE) followed by "ab" in little-endian, but the caller
+	// passes big-endian as the default; the BOM should win.
+	data := []byte{0xFF, 0xFE, 'a', 0, 'b', 0}
+	got, err := decodeUTF16(data, binary.BigEndian)
+	if err != nil {
+		t.Fatalf("decodeUTF16: %v", err)
+	}
+	if string(got) != "ab" {
+		t.Errorf("got %q, want %q", got, "ab")
+	}
+}
+
+func TestDecodeUTF16RejectsOddLength(t *testing.T) {
+	if _, err := decodeUTF16([]byte{'a', 0, 'b'}, binary.LittleEndian); err == nil {
+		t.Error("expected error for odd byte length, got nil")
+	}
+}
+
+func TestRunDecodesLatin1Input(t *testing.T) {
+	dir := t.TempDir()
+	inPath := filepath.Join(dir, "latin1.csv")
+	outPath := filepath.Join(dir, "clean.csv")
+
+	// "name,city\nJos\xe9,S\xe3o Paulo\n" -- Latin-1 bytes for accented chars.
+	input := []byte("name,city\nJos\xe9,S\xe3o Paulo\n")
+	if err := os.WriteFile(inPath, input, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := run(inPath, outPath, "", ",", "latin1", true, false, true); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	got, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	want := "name,city\nJosé,São Paulo\n"
+	if string(got) != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestRunDecodesUTF16Input(t *testing.T) {
+	dir := t.TempDir()
+	inPath := filepath.Join(dir, "utf16.csv")
+	outPath := filepath.Join(dir, "clean.csv")
+
+	text := "name,age\nAlice,30\n"
+	u16 := utf16.Encode([]rune(text))
+	buf := make([]byte, 2+len(u16)*2)
+	buf[0], buf[1] = 0xFF, 0xFE // little-endian BOM
+	for i, u := range u16 {
+		binary.LittleEndian.PutUint16(buf[2+i*2:], u)
+	}
+	if err := os.WriteFile(inPath, buf, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := run(inPath, outPath, "", ",", "utf16", true, false, true); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	got, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	want := "name,age\nAlice,30\n"
+	if string(got) != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
 	}
 }

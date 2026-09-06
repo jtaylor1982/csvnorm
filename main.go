@@ -1,12 +1,13 @@
 // Command csvnorm reads a CSV file that may have inconsistent delimiters,
-// ragged rows, stray whitespace, or a leading byte-order mark, and writes
-// out a clean, RFC 4180 CSV file with a comma delimiter and uniform column
-// counts.
+// ragged rows, stray whitespace, a non-UTF-8 encoding, or a leading
+// byte-order mark, and writes out a clean, RFC 4180 CSV file with a comma
+// delimiter and uniform column counts.
 package main
 
 import (
 	"bufio"
 	"bytes"
+	"encoding/binary"
 	"encoding/csv"
 	"errors"
 	"flag"
@@ -14,6 +15,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"unicode/utf16"
 )
 
 const bom = "﻿"
@@ -29,19 +31,20 @@ func main() {
 		outPath   = flag.String("out", "", "output CSV file (default: stdout)")
 		delim     = flag.String("delim", "", "input delimiter; auto-detected if omitted")
 		outDelim  = flag.String("out-delim", ",", "output delimiter")
+		encoding  = flag.String("encoding", "", "input encoding: utf8 (default), latin1, utf16, utf16le, or utf16be")
 		trim      = flag.Bool("trim", true, "trim leading/trailing whitespace from each field")
 		strict    = flag.Bool("strict", false, "fail on ragged rows instead of padding/truncating them")
 		dropEmpty = flag.Bool("drop-empty", true, "drop rows where every field is empty")
 	)
 	flag.Parse()
 
-	if err := run(*inPath, *outPath, *delim, *outDelim, *trim, *strict, *dropEmpty); err != nil {
+	if err := run(*inPath, *outPath, *delim, *outDelim, *encoding, *trim, *strict, *dropEmpty); err != nil {
 		fmt.Fprintln(os.Stderr, "csvnorm:", err)
 		os.Exit(1)
 	}
 }
 
-func run(inPath, outPath, delimFlag, outDelimFlag string, trim, strict, dropEmpty bool) error {
+func run(inPath, outPath, delimFlag, outDelimFlag, encoding string, trim, strict, dropEmpty bool) error {
 	in, err := openInput(inPath)
 	if err != nil {
 		return err
@@ -54,7 +57,17 @@ func run(inPath, outPath, delimFlag, outDelimFlag string, trim, strict, dropEmpt
 	}
 	defer out.Close()
 
-	reader := bufio.NewReader(in)
+	raw, err := io.ReadAll(in)
+	if err != nil {
+		return fmt.Errorf("reading input: %w", err)
+	}
+
+	decoded, err := decodeToUTF8(raw, encoding)
+	if err != nil {
+		return fmt.Errorf("decoding input: %w", err)
+	}
+
+	reader := bufio.NewReader(bytes.NewReader(decoded))
 	stripLeadingBOM(reader)
 
 	delim, err := resolveDelim(reader, delimFlag)
@@ -176,6 +189,59 @@ func parseDelimChar(s string) (rune, error) {
 		return 0, fmt.Errorf("delimiter must be a single character, got %q", s)
 	}
 	return runes[0], nil
+}
+
+// decodeToUTF8 converts raw bytes in the named encoding to UTF-8. An empty
+// encoding means the input is already UTF-8, which covers plain ASCII too.
+func decodeToUTF8(data []byte, encoding string) ([]byte, error) {
+	switch strings.ToLower(encoding) {
+	case "", "utf8", "utf-8":
+		return data, nil
+	case "latin1", "iso-8859-1", "iso8859-1":
+		return latin1ToUTF8(data), nil
+	case "utf16", "utf-16":
+		return decodeUTF16(data, binary.LittleEndian)
+	case "utf16le", "utf-16le":
+		return decodeUTF16(data, binary.LittleEndian)
+	case "utf16be", "utf-16be":
+		return decodeUTF16(data, binary.BigEndian)
+	default:
+		return nil, fmt.Errorf("unknown encoding %q (want utf8, latin1, utf16, utf16le, or utf16be)", encoding)
+	}
+}
+
+// latin1ToUTF8 converts ISO-8859-1 bytes to UTF-8. Every Latin-1 byte maps
+// directly onto the Unicode code point of the same value, so this can't fail.
+func latin1ToUTF8(data []byte) []byte {
+	runes := make([]rune, len(data))
+	for i, b := range data {
+		runes[i] = rune(b)
+	}
+	return []byte(string(runes))
+}
+
+// decodeUTF16 converts UTF-16 bytes to UTF-8. If data starts with a byte-
+// order mark, that overrides the given default order. defaultOrder is used
+// as-is otherwise, so -encoding utf16le/utf16be still respects a BOM if one
+// happens to be present, and only falls back to the flag's order without one.
+func decodeUTF16(data []byte, defaultOrder binary.ByteOrder) ([]byte, error) {
+	order := defaultOrder
+	switch {
+	case len(data) >= 2 && data[0] == 0xFF && data[1] == 0xFE:
+		order = binary.LittleEndian
+		data = data[2:]
+	case len(data) >= 2 && data[0] == 0xFE && data[1] == 0xFF:
+		order = binary.BigEndian
+		data = data[2:]
+	}
+	if len(data)%2 != 0 {
+		return nil, fmt.Errorf("utf16 input has odd byte length %d", len(data))
+	}
+	units := make([]uint16, len(data)/2)
+	for i := range units {
+		units[i] = order.Uint16(data[i*2 : i*2+2])
+	}
+	return []byte(string(utf16.Decode(units))), nil
 }
 
 // parseRecords parses data as delim-separated CSV. If a quoted field is

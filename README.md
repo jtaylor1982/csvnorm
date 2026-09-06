@@ -31,6 +31,9 @@ csvnorm -in messy.csv -out clean.csv
 - Writes comma-delimited output by default, independent of whatever the
   input used; pass `-out-delim` to write something else instead (a tab, a
   pipe, whatever the downstream tool expects).
+- Reads UTF-8 by default; pass `-encoding` for Latin-1 (`iso-8859-1`) or
+  UTF-16 (`utf16`, `utf16le`, `utf16be`) input. A UTF-16 byte-order mark, if
+  present, overrides whichever endianness you asked for.
 - Strips a leading UTF-8 byte-order mark if present.
 - Trims leading/trailing whitespace from every field (disable with `-trim=false`).
 - Pads short rows and truncates long rows to match the header's column
@@ -74,6 +77,7 @@ Bob,,Shelbyville
 | `-out`         | stdout  | output file path                                     |
 | `-delim`       | auto    | input delimiter, single character                   |
 | `-out-delim`   | `,`     | output delimiter, single character                   |
+| `-encoding`    | `utf8`  | input encoding: `utf8`, `latin1`, `utf16`, `utf16le`, `utf16be` |
 | `-trim`        | true    | trim whitespace from each field                      |
 | `-strict`      | false   | error on ragged rows instead of padding/truncating   |
 | `-drop-empty`  | true    | drop rows where every field is empty                 |
@@ -89,6 +93,6 @@ go build -o csvnorm .
 ## Status
 
 Early. Handles the common messiness (delimiter guessing, ragged rows, BOM,
-whitespace, unterminated quotes, choosing an output delimiter) but not yet
-things like mixed encodings or column-level type normalization. See the
-issue tracker for what's next.
+whitespace, unterminated quotes, non-UTF-8 encodings, choosing an output
+delimiter) but not yet column-level type normalization. See the issue
+tracker for what's next.
