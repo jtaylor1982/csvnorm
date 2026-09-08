@@ -178,7 +178,7 @@ func TestRunEndToEnd(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := run(inPath, outPath, "", ",", "", true, false, true); err != nil {
+	if err := run(inPath, outPath, "", ",", "", true, false, true, false, false); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -266,7 +266,7 @@ func TestRunHandlesUnterminatedQuote(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := run(inPath, outPath, "", ",", "", true, false, true); err != nil {
+	if err := run(inPath, outPath, "", ",", "", true, false, true, false, false); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -289,7 +289,7 @@ func TestRunStrictRejectsRaggedRows(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := run(inPath, outPath, "", ",", "", true, true, true); err == nil {
+	if err := run(inPath, outPath, "", ",", "", true, true, true, false, false); err == nil {
 		t.Error("expected error for ragged row under -strict, got nil")
 	}
 }
@@ -304,7 +304,7 @@ func TestRunCustomOutDelim(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := run(inPath, outPath, "", ";", "", true, false, true); err != nil {
+	if err := run(inPath, outPath, "", ";", "", true, false, true, false, false); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -327,7 +327,7 @@ func TestRunRejectsMultiCharOutDelim(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := run(inPath, outPath, "", "::", "", true, false, true); err == nil {
+	if err := run(inPath, outPath, "", "::", "", true, false, true, false, false); err == nil {
 		t.Error("expected error for multi-character output delimiter, got nil")
 	}
 }
@@ -411,7 +411,7 @@ func TestRunDecodesLatin1Input(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := run(inPath, outPath, "", ",", "latin1", true, false, true); err != nil {
+	if err := run(inPath, outPath, "", ",", "latin1", true, false, true, false, false); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -441,7 +441,7 @@ func TestRunDecodesUTF16Input(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := run(inPath, outPath, "", ",", "utf16", true, false, true); err != nil {
+	if err := run(inPath, outPath, "", ",", "utf16", true, false, true, false, false); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -452,5 +452,151 @@ func TestRunDecodesUTF16Input(t *testing.T) {
 	want := "name,age\nAlice,30\n"
 	if string(got) != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestParseNumberPlainInteger(t *testing.T) {
+	got, ok := parseNumber("1234")
+	if !ok || got != "1234" {
+		t.Errorf("got (%q, %v), want (\"1234\", true)", got, ok)
+	}
+}
+
+func TestParseNumberUSThousandsAndDecimal(t *testing.T) {
+	got, ok := parseNumber("$1,234.56")
+	if !ok || got != "1234.56" {
+		t.Errorf("got (%q, %v), want (\"1234.56\", true)", got, ok)
+	}
+}
+
+func TestParseNumberEuropeanThousandsAndDecimal(t *testing.T) {
+	got, ok := parseNumber("1.234,56")
+	if !ok || got != "1234.56" {
+		t.Errorf("got (%q, %v), want (\"1234.56\", true)", got, ok)
+	}
+}
+
+func TestParseNumberBareCommaThousands(t *testing.T) {
+	got, ok := parseNumber("12,345,678")
+	if !ok || got != "12345678" {
+		t.Errorf("got (%q, %v), want (\"12345678\", true)", got, ok)
+	}
+}
+
+func TestParseNumberBareCommaDecimal(t *testing.T) {
+	got, ok := parseNumber("12,5")
+	if !ok || got != "12.5" {
+		t.Errorf("got (%q, %v), want (\"12.5\", true)", got, ok)
+	}
+}
+
+func TestParseNumberNegativeSign(t *testing.T) {
+	got, ok := parseNumber("-42.5")
+	if !ok || got != "-42.5" {
+		t.Errorf("got (%q, %v), want (\"-42.5\", true)", got, ok)
+	}
+}
+
+func TestParseNumberRejectsNonNumeric(t *testing.T) {
+	if _, ok := parseNumber("N/A"); ok {
+		t.Error("expected \"N/A\" to not parse as a number")
+	}
+}
+
+func TestColumnDateLayoutDetectsISO(t *testing.T) {
+	layout, ok := columnDateLayout([]string{"2024-01-05", "2024-12-31"})
+	if !ok || layout != "2006-01-02" {
+		t.Errorf("got (%q, %v), want (\"2006-01-02\", true)", layout, ok)
+	}
+}
+
+func TestColumnDateLayoutDetectsUSSlash(t *testing.T) {
+	layout, ok := columnDateLayout([]string{"01/05/2024", "12/31/2024"})
+	if !ok || layout != "01/02/2006" {
+		t.Errorf("got (%q, %v), want (\"01/02/2006\", true)", layout, ok)
+	}
+}
+
+func TestColumnDateLayoutRejectsMixedFormats(t *testing.T) {
+	if _, ok := columnDateLayout([]string{"2024-01-05", "01/05/2024"}); ok {
+		t.Error("expected mixed date formats to not agree on a layout")
+	}
+}
+
+func TestColumnDateLayoutIgnoresEmptyValues(t *testing.T) {
+	layout, ok := columnDateLayout([]string{"2024-01-05", "", "2024-12-31"})
+	if !ok || layout != "2006-01-02" {
+		t.Errorf("got (%q, %v), want (\"2006-01-02\", true)", layout, ok)
+	}
+}
+
+func TestRunNormalizesNumberColumn(t *testing.T) {
+	dir := t.TempDir()
+	inPath := filepath.Join(dir, "in.csv")
+	outPath := filepath.Join(dir, "out.csv")
+
+	input := "name,price\nWidget,\"$1,234.50\"\nGadget,$99.00\n"
+	if err := os.WriteFile(inPath, []byte(input), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := run(inPath, outPath, "", ",", "", true, false, true, false, true); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	got, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	want := "name,price\nWidget,1234.50\nGadget,99.00\n"
+	if string(got) != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestRunNormalizesDateColumn(t *testing.T) {
+	dir := t.TempDir()
+	inPath := filepath.Join(dir, "in.csv")
+	outPath := filepath.Join(dir, "out.csv")
+
+	input := "name,signed\nAlice,01/05/2024\nBob,12/31/2024\n"
+	if err := os.WriteFile(inPath, []byte(input), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := run(inPath, outPath, "", ",", "", true, false, true, true, false); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	got, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	want := "name,signed\nAlice,2024-01-05\nBob,2024-12-31\n"
+	if string(got) != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestRunLeavesMixedColumnUntouched(t *testing.T) {
+	dir := t.TempDir()
+	inPath := filepath.Join(dir, "in.csv")
+	outPath := filepath.Join(dir, "out.csv")
+
+	input := "name,note\nAlice,42\nBob,not a number\n"
+	if err := os.WriteFile(inPath, []byte(input), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := run(inPath, outPath, "", ",", "", true, false, true, false, true); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	got, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(got) != input {
+		t.Errorf("got:\n%s\nwant unchanged:\n%s", got, input)
 	}
 }

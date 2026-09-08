@@ -44,6 +44,14 @@ csvnorm -in messy.csv -out clean.csv
   bug that would otherwise swallow every row after it into one field, or
   fail outright). When that happens, csvnorm falls back to treating each
   physical line as one row, prints a warning to stderr, and keeps going.
+- Optionally normalizes columns of dates or numbers to one canonical format
+  (`-normalize-dates`, `-normalize-numbers`). The first row is always
+  treated as a header and left alone. A column is only rewritten when every
+  value below the header agrees on the same format; a column that mixes
+  formats, or isn't dates/numbers at all, is left untouched rather than
+  guessed at. Dates become `YYYY-MM-DD`; numbers have currency symbols and
+  thousands separators stripped (both `1,234.56` and `1.234,56` style
+  grouping are recognized).
 
 ### Example
 
@@ -81,6 +89,8 @@ Bob,,Shelbyville
 | `-trim`        | true    | trim whitespace from each field                      |
 | `-strict`      | false   | error on ragged rows instead of padding/truncating   |
 | `-drop-empty`  | true    | drop rows where every field is empty                 |
+| `-normalize-dates`   | false | rewrite consistently-formatted date columns as `YYYY-MM-DD` |
+| `-normalize-numbers` | false | rewrite consistently-formatted number columns, stripping currency symbols and thousands separators |
 
 ## Building
 
@@ -94,5 +104,5 @@ go build -o csvnorm .
 
 Early. Handles the common messiness (delimiter guessing, ragged rows, BOM,
 whitespace, unterminated quotes, non-UTF-8 encodings, choosing an output
-delimiter) but not yet column-level type normalization. See the issue
-tracker for what's next.
+delimiter) and can normalize date and number columns. Text casing
+normalization and packaged release binaries are next.
