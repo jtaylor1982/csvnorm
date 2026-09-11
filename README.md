@@ -52,6 +52,10 @@ csvnorm -in messy.csv -out clean.csv
   guessed at. Dates become `YYYY-MM-DD`; numbers have currency symbols and
   thousands separators stripped (both `1,234.56` and `1.234,56` style
   grouping are recognized).
+- Optionally rewrites the header row to a consistent case (`-case lower`,
+  `-case upper`, or `-case snake`), so `First Name`, `LAST_NAME`, and `city`
+  all end up looking the same. Only the header row is touched; data rows are
+  left alone.
 
 ### Example
 
@@ -91,6 +95,7 @@ Bob,,Shelbyville
 | `-drop-empty`  | true    | drop rows where every field is empty                 |
 | `-normalize-dates`   | false | rewrite consistently-formatted date columns as `YYYY-MM-DD` |
 | `-normalize-numbers` | false | rewrite consistently-formatted number columns, stripping currency symbols and thousands separators |
+| `-case`        | (none)  | rewrite header column names to a consistent case: `lower`, `upper`, or `snake` |
 
 ## Building
 
@@ -104,5 +109,5 @@ go build -o csvnorm .
 
 Early. Handles the common messiness (delimiter guessing, ragged rows, BOM,
 whitespace, unterminated quotes, non-UTF-8 encodings, choosing an output
-delimiter) and can normalize date and number columns. Text casing
-normalization and packaged release binaries are next.
+delimiter) and can normalize date, number, and header-casing columns.
+Packaged release binaries are next.

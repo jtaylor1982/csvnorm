@@ -16,6 +16,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf16"
 )
 
@@ -38,16 +39,21 @@ func main() {
 		dropEmpty = flag.Bool("drop-empty", true, "drop rows where every field is empty")
 		normDates = flag.Bool("normalize-dates", false, "rewrite columns of consistently-formatted dates as YYYY-MM-DD")
 		normNums  = flag.Bool("normalize-numbers", false, "rewrite columns of consistently-formatted numbers, stripping currency symbols and thousands separators")
+		caseMode  = flag.String("case", "", "rewrite header column names to a consistent case: lower, upper, or snake")
 	)
 	flag.Parse()
 
-	if err := run(*inPath, *outPath, *delim, *outDelim, *encoding, *trim, *strict, *dropEmpty, *normDates, *normNums); err != nil {
+	if err := run(*inPath, *outPath, *delim, *outDelim, *encoding, *trim, *strict, *dropEmpty, *normDates, *normNums, *caseMode); err != nil {
 		fmt.Fprintln(os.Stderr, "csvnorm:", err)
 		os.Exit(1)
 	}
 }
 
-func run(inPath, outPath, delimFlag, outDelimFlag, encoding string, trim, strict, dropEmpty, normDates, normNumbers bool) error {
+func run(inPath, outPath, delimFlag, outDelimFlag, encoding string, trim, strict, dropEmpty, normDates, normNumbers bool, caseMode string) error {
+	if err := validateCaseMode(caseMode); err != nil {
+		return fmt.Errorf("-case: %w", err)
+	}
+
 	in, err := openInput(inPath)
 	if err != nil {
 		return err
@@ -118,6 +124,9 @@ func run(inPath, outPath, delimFlag, outDelimFlag, encoding string, trim, strict
 	}
 
 	normalizeColumns(rows, width, normDates, normNumbers)
+	if len(rows) > 0 {
+		applyCaseMode(rows[0], caseMode)
+	}
 
 	w := csv.NewWriter(out)
 	w.Comma = outDelim
@@ -356,6 +365,81 @@ func rowIsEmpty(rec []string) bool {
 		}
 	}
 	return true
+}
+
+// validateCaseMode reports whether mode is a value applyCaseMode accepts.
+func validateCaseMode(mode string) error {
+	switch mode {
+	case "", "lower", "upper", "snake":
+		return nil
+	default:
+		return fmt.Errorf("unknown value %q (want lower, upper, or snake)", mode)
+	}
+}
+
+// applyCaseMode rewrites header in place to the given case convention. mode
+// is assumed to have already passed validateCaseMode; an empty mode leaves
+// header untouched.
+func applyCaseMode(header []string, mode string) {
+	switch mode {
+	case "lower":
+		for i, f := range header {
+			header[i] = strings.ToLower(f)
+		}
+	case "upper":
+		for i, f := range header {
+			header[i] = strings.ToUpper(f)
+		}
+	case "snake":
+		for i, f := range header {
+			header[i] = toSnakeCase(f)
+		}
+	}
+}
+
+// toSnakeCase rewrites s as lower_snake_case: runs of whitespace or
+// punctuation become a single underscore, and a capital that follows a
+// lowercase letter or digit (as in "firstName") also starts a new word. A
+// run of capitals like "AGE" or an acronym in "HTTPStatus" is treated as one
+// word rather than split letter by letter.
+func toSnakeCase(s string) string {
+	runes := []rune(s)
+	var b strings.Builder
+	for i, r := range runes {
+		switch {
+		case unicode.IsUpper(r):
+			prevLower := i > 0 && (unicode.IsLower(runes[i-1]) || unicode.IsDigit(runes[i-1]))
+			prevUpperNextLower := i > 0 && unicode.IsUpper(runes[i-1]) && i+1 < len(runes) && unicode.IsLower(runes[i+1])
+			if prevLower || prevUpperNextLower {
+				b.WriteByte('_')
+			}
+			b.WriteRune(unicode.ToLower(r))
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return strings.Trim(collapseUnderscores(b.String()), "_")
+}
+
+// collapseUnderscores replaces every run of consecutive underscores in s
+// with a single underscore.
+func collapseUnderscores(s string) string {
+	var b strings.Builder
+	prevUnderscore := false
+	for _, r := range s {
+		if r == '_' {
+			if prevUnderscore {
+				continue
+			}
+			prevUnderscore = true
+		} else {
+			prevUnderscore = false
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // dateLayouts are tried, in order, when detecting a date column. Only

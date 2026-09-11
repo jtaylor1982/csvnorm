@@ -178,7 +178,7 @@ func TestRunEndToEnd(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := run(inPath, outPath, "", ",", "", true, false, true, false, false); err != nil {
+	if err := run(inPath, outPath, "", ",", "", true, false, true, false, false, ""); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -266,7 +266,7 @@ func TestRunHandlesUnterminatedQuote(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := run(inPath, outPath, "", ",", "", true, false, true, false, false); err != nil {
+	if err := run(inPath, outPath, "", ",", "", true, false, true, false, false, ""); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -289,7 +289,7 @@ func TestRunStrictRejectsRaggedRows(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := run(inPath, outPath, "", ",", "", true, true, true, false, false); err == nil {
+	if err := run(inPath, outPath, "", ",", "", true, true, true, false, false, ""); err == nil {
 		t.Error("expected error for ragged row under -strict, got nil")
 	}
 }
@@ -304,7 +304,7 @@ func TestRunCustomOutDelim(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := run(inPath, outPath, "", ";", "", true, false, true, false, false); err != nil {
+	if err := run(inPath, outPath, "", ";", "", true, false, true, false, false, ""); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -327,7 +327,7 @@ func TestRunRejectsMultiCharOutDelim(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := run(inPath, outPath, "", "::", "", true, false, true, false, false); err == nil {
+	if err := run(inPath, outPath, "", "::", "", true, false, true, false, false, ""); err == nil {
 		t.Error("expected error for multi-character output delimiter, got nil")
 	}
 }
@@ -411,7 +411,7 @@ func TestRunDecodesLatin1Input(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := run(inPath, outPath, "", ",", "latin1", true, false, true, false, false); err != nil {
+	if err := run(inPath, outPath, "", ",", "latin1", true, false, true, false, false, ""); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -441,7 +441,7 @@ func TestRunDecodesUTF16Input(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := run(inPath, outPath, "", ",", "utf16", true, false, true, false, false); err != nil {
+	if err := run(inPath, outPath, "", ",", "utf16", true, false, true, false, false, ""); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -540,7 +540,7 @@ func TestRunNormalizesNumberColumn(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := run(inPath, outPath, "", ",", "", true, false, true, false, true); err != nil {
+	if err := run(inPath, outPath, "", ",", "", true, false, true, false, true, ""); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -564,7 +564,7 @@ func TestRunNormalizesDateColumn(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := run(inPath, outPath, "", ",", "", true, false, true, true, false); err != nil {
+	if err := run(inPath, outPath, "", ",", "", true, false, true, true, false, ""); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -588,7 +588,7 @@ func TestRunLeavesMixedColumnUntouched(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := run(inPath, outPath, "", ",", "", true, false, true, false, true); err != nil {
+	if err := run(inPath, outPath, "", ",", "", true, false, true, false, true, ""); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -598,5 +598,111 @@ func TestRunLeavesMixedColumnUntouched(t *testing.T) {
 	}
 	if string(got) != input {
 		t.Errorf("got:\n%s\nwant unchanged:\n%s", got, input)
+	}
+}
+
+func TestValidateCaseModeAcceptsKnownValues(t *testing.T) {
+	for _, mode := range []string{"", "lower", "upper", "snake"} {
+		if err := validateCaseMode(mode); err != nil {
+			t.Errorf("validateCaseMode(%q): %v", mode, err)
+		}
+	}
+}
+
+func TestValidateCaseModeRejectsUnknown(t *testing.T) {
+	if err := validateCaseMode("title"); err == nil {
+		t.Error("expected error for unknown -case value, got nil")
+	}
+}
+
+func TestToSnakeCaseSpaces(t *testing.T) {
+	if got := toSnakeCase("First Name"); got != "first_name" {
+		t.Errorf("got %q, want %q", got, "first_name")
+	}
+}
+
+func TestToSnakeCaseCamelCase(t *testing.T) {
+	if got := toSnakeCase("FirstName"); got != "first_name" {
+		t.Errorf("got %q, want %q", got, "first_name")
+	}
+}
+
+func TestToSnakeCaseKeepsAcronymTogether(t *testing.T) {
+	if got := toSnakeCase("AGE"); got != "age" {
+		t.Errorf("got %q, want %q", got, "age")
+	}
+}
+
+func TestToSnakeCaseAcronymFollowedByWord(t *testing.T) {
+	if got := toSnakeCase("HTTPStatus"); got != "http_status" {
+		t.Errorf("got %q, want %q", got, "http_status")
+	}
+}
+
+func TestToSnakeCaseCollapsesPunctuationAndUnderscores(t *testing.T) {
+	if got := toSnakeCase("  Last__Name!! "); got != "last_name" {
+		t.Errorf("got %q, want %q", got, "last_name")
+	}
+}
+
+func TestRunNormalizesHeaderCaseSnake(t *testing.T) {
+	dir := t.TempDir()
+	inPath := filepath.Join(dir, "in.csv")
+	outPath := filepath.Join(dir, "out.csv")
+
+	input := "First Name,LAST_NAME,City\nAlice,Smith,Springfield\n"
+	if err := os.WriteFile(inPath, []byte(input), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := run(inPath, outPath, "", ",", "", true, false, true, false, false, "snake"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	got, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	want := "first_name,last_name,city\nAlice,Smith,Springfield\n"
+	if string(got) != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestRunNormalizesHeaderCaseUpper(t *testing.T) {
+	dir := t.TempDir()
+	inPath := filepath.Join(dir, "in.csv")
+	outPath := filepath.Join(dir, "out.csv")
+
+	input := "name,city\nAlice,Springfield\n"
+	if err := os.WriteFile(inPath, []byte(input), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := run(inPath, outPath, "", ",", "", true, false, true, false, false, "upper"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	got, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	want := "NAME,CITY\nAlice,Springfield\n"
+	if string(got) != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestRunRejectsUnknownCaseMode(t *testing.T) {
+	dir := t.TempDir()
+	inPath := filepath.Join(dir, "in.csv")
+	outPath := filepath.Join(dir, "out.csv")
+
+	if err := os.WriteFile(inPath, []byte("a,b,c\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := run(inPath, outPath, "", ",", "", true, false, true, false, false, "title"); err == nil {
+		t.Error("expected error for unknown -case value, got nil")
 	}
 }
